@@ -10,6 +10,7 @@
 #include <QGraphicsView>
 #include <QGraphicsWidget>
 #include <QUrl>
+#include <QtOpenGL/QGLContext>
 
 class QMozContext;
 class QSyncMessage;
@@ -101,7 +102,8 @@ protected:
     virtual void keyReleaseEvent(QKeyEvent*);
     virtual void inputMethodEvent(QInputMethodEvent*);
     virtual QVariant inputMethodQuery(Qt::InputMethodQuery aQuery) const;
-    virtual void EraseBackgroundGL(QPainter*, const QRect&);
+    virtual void StencilClipGLEnable(const QRect&);
+    virtual void StencilClipGLDisable();
 
 private Q_SLOTS:
     void onInitialized();
@@ -110,7 +112,12 @@ private Q_SLOTS:
 
 private:
     void forceActiveFocus();
-
+#if defined(GL_PROVIDER_EGL) && !defined(EGL_FORCE_SCISSOR_CLIP)
+    GLuint loadShader(const char* src, GLenum type);
+    void createStencilClipProgram();
+    GLuint stencilProgramObject;
+    GLuint colorUniform;
+#endif
     QGraphicsMozViewPrivate* d;
     friend class QGraphicsMozViewPrivate;
 };

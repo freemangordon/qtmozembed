@@ -95,6 +95,14 @@ public:
     }
     virtual void SetBackgroundColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
         mBgColor = QColor(r, g, b, a);
+        QGraphicsView* view = GetViewWidget();
+
+        if(view)
+        {
+          QPalette palette;
+          palette.setColor(view->backgroundRole(),QColor(mBgColor));
+          view->setPalette(palette);
+        }
     }
     virtual bool Invalidate() {
         q->update();
@@ -257,6 +265,9 @@ public:
 
 QGraphicsMozView::QGraphicsMozView(QGraphicsItem* parent)
     : QGraphicsWidget(parent)
+#if defined(GL_PROVIDER_EGL) && !defined(EGL_FORCE_SCISSOR_CLIP)
+    , stencilProgramObject(0)
+#endif
     , d(new QGraphicsMozViewPrivate(this))
 {
     LOGT();
@@ -281,6 +292,7 @@ QGraphicsMozView::QGraphicsMozView(QGraphicsItem* parent)
     }
 }
 
+
 QGraphicsMozView::~QGraphicsMozView()
 {
     delete d;
@@ -294,19 +306,165 @@ QGraphicsMozView::onInitialized()
     d->mView->SetListener(d);
 }
 
-void QGraphicsMozView::EraseBackgroundGL(QPainter* painter, const QRect& r)
+#if defined(GL_PROVIDER_EGL) && !defined(EGL_FORCE_SCISSOR_CLIP)
+GLuint
+QGraphicsMozView::loadShader(const char* src, GLenum type)
 {
-#ifdef GL_PROVIDER_EGL
-    glEnable(GL_SCISSOR_TEST);
-    glScissor(r.x(), r.y(), r.width(), r.height());
-    glClearColor((GLfloat)d->mBgColor.red() / 255.0,
-                 (GLfloat)d->mBgColor.green() / 255.0,
-                 (GLfloat)d->mBgColor.blue() / 255.0,
-                 (GLfloat)d->mBgColor.alpha() / 255.0);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glDisable(GL_SCISSOR_TEST);
-#else
-    painter->fillRect(r, d->mBgColor);
+    GLuint shader;
+    GLint compiled;
+
+    // Create the shader object
+    shader = glCreateShader(type);
+    if (!shader)
+      return 0;
+
+    // Load the shader source
+    glShaderSource(shader, 1, &src, NULL);
+
+    // Compile the shader
+    glCompileShader(shader);
+
+    // Check the compile status
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (!compiled) {
+      GLint infoLen = 0;
+      glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLen);
+      if (infoLen > 1) {
+        char* infoLog = (char*)malloc(sizeof(char) * infoLen);
+        glGetShaderInfoLog(shader, infoLen, NULL, infoLog);
+        LOGT("Unable to compile the shader - %s", infoLog);
+        free(infoLog);
+      }
+      glDeleteShader(shader);
+      return 0;
+    }
+
+    return shader;
+}
+
+#define STENCIL_ARRAY_INDEX 0
+void
+QGraphicsMozView::createStencilClipProgram()
+{
+  GLuint fragmentShader;
+  GLuint vertexShader;
+  GLint linked;
+
+  QString srcFragShader = "\
+          uniform lowp vec3 f_color;\
+          void main (void)\
+          {\
+            gl_FragColor = vec4(f_color[0], f_color[1], f_color[2], 0.0);\
+          }";
+
+  QString srcVertShader = "\
+          attribute highp vec4 stencilVertex;\
+          void main(void)\
+          {\
+            gl_Position = stencilVertex;\
+          }";
+
+  // Create the program object
+  stencilProgramObject = glCreateProgram();
+  if (!stencilProgramObject)
+    return;
+
+  // Load the shaders
+  fragmentShader = loadShader(qPrintable(srcFragShader), GL_FRAGMENT_SHADER);
+  vertexShader = loadShader(qPrintable(srcVertShader), GL_VERTEX_SHADER);
+
+  if (!fragmentShader || !vertexShader)
+    return;
+  glAttachShader(stencilProgramObject, vertexShader);
+  glAttachShader(stencilProgramObject, fragmentShader);
+
+  // Bind stencilVertex to attribute STENCIL_ARRAY_INDEX
+  glBindAttribLocation(stencilProgramObject,
+                       STENCIL_ARRAY_INDEX,
+                       "stencilVertex");
+
+  // Link the program
+  glLinkProgram(stencilProgramObject);
+
+  // Check the link status
+  glGetProgramiv(stencilProgramObject, GL_LINK_STATUS, &linked);
+  if (!linked) {
+    GLint infoLen = 0;
+    glGetProgramiv(stencilProgramObject, GL_INFO_LOG_LENGTH, &infoLen);
+    if (infoLen > 1) {
+      char* infoLog = (char*)malloc(sizeof(char) * infoLen);
+      glGetProgramInfoLog(stencilProgramObject, infoLen, NULL, infoLog);
+      LOGT("Link failed - %s",infoLog);
+      free(infoLog);
+    }
+    glDeleteProgram(stencilProgramObject);
+    stencilProgramObject = 0;
+  } else {
+    colorUniform = glGetUniformLocation(stencilProgramObject, "f_color");
+    if (colorUniform == -1) {
+      LOGT("Could not bind uniform f_color");
+    }
+  }
+}
+#endif
+
+/*
+  This is a noop on non-EGL HW, clipping is done in gecko by using scissor test
+  Using scissor test on EGL could be forced with defining EGL_FORCE_SCISSOR_CLIP
+  */
+void
+QGraphicsMozView::StencilClipGLEnable(const QRect& r)
+{
+#if defined(GL_PROVIDER_EGL) && !defined(EGL_FORCE_SCISSOR_CLIP)
+#define scaleGL(p, s) \
+  (2.0f*(((GLfloat)p)/((GLfloat)s))-1.0f)
+
+  GLfloat w = scene()->views()[0]->width();
+  GLfloat h = scene()->views()[0]->height();
+  QRectF rs = mapRectToScene(QRectF(r));
+
+  GLfloat rsx = rs.x();
+  GLfloat rsy = rs.y();
+  GLfloat rsw = rs.width();
+  GLfloat rsh = rs.height();
+
+  GLfloat vertexs[] = {
+    scaleGL(rsx, w),     scaleGL(h-(rsy+rsh), h), 0.0f,
+    scaleGL(rsx+rsw, w), scaleGL(h-(rsy+rsh), h), 0.0f,
+    scaleGL(rsx, w),     scaleGL(h-rsy, h),       0.0f,
+    scaleGL(rsx+rsw, w), scaleGL(h-rsy, h),       0.0f
+  };
+
+  if (!stencilProgramObject) {
+    createStencilClipProgram();
+  }
+
+  glClearStencil(0);
+  glClear(GL_STENCIL_BUFFER_BIT);
+  glEnable(GL_STENCIL_TEST);
+
+  glStencilFunc(GL_NEVER, 1, 1);
+  glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE);
+
+  glUseProgram(stencilProgramObject);
+
+  glUniform3f(colorUniform, 1.0f, 1.0f, 1.0f);
+  glVertexAttribPointer(STENCIL_ARRAY_INDEX, 3, GL_FLOAT, GL_FALSE, 0, vertexs);
+  glEnableVertexAttribArray(STENCIL_ARRAY_INDEX);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+  glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+  glStencilFunc(GL_EQUAL, 1, 1);
+
+  glDisableVertexAttribArray(STENCIL_ARRAY_INDEX);
+#endif
+}
+
+void
+QGraphicsMozView::StencilClipGLDisable()
+{
+#if defined(GL_PROVIDER_EGL) && !defined(EGL_FORCE_SCISSOR_CLIP)
+  glDisable(GL_STENCIL_TEST);
 #endif
 }
 
@@ -330,20 +488,22 @@ QGraphicsMozView::paint(QPainter* painter, const QStyleOptionGraphicsItem* opt, 
         d->mLastIsGoodRotation = matr.PreservesAxisAlignedRectangles();
         if (d->mContext->GetApp()->IsAccelerated()) {
             d->mView->SetGLViewTransform(matr);
+#if defined(EGL_FORCE_SCISSOR_CLIP)
             d->mView->SetViewClipping(0, 0, d->mSize.width(), d->mSize.height());
+#endif
             if (changedState) {
                 d->UpdateViewSize();
             }
             if (d->mLastIsGoodRotation) {
                 // FIXME need to find proper rect using proper transform chain
-                QRect eraseRect = painter->transform().isRotating() ? affine.mapRect(r) : r;
+                QRect paintRect = painter->transform().isRotating() ? affine.mapRect(r) : r;
                 painter->beginNativePainting();
-                EraseBackgroundGL(painter, eraseRect);
-                bool retval = d->mView->RenderGL();
+                StencilClipGLEnable(paintRect);
+
+                d->mView->RenderGL();
+
+                StencilClipGLDisable();
                 painter->endNativePainting();
-                if (!retval) {
-                    EraseBackgroundGL(painter, eraseRect);
-                }
             }
         } else {
             if (d->mTempBufferImage.isNull() || d->mTempBufferImage.width() != r.width() || d->mTempBufferImage.height() != r.height()) {
@@ -358,9 +518,7 @@ QGraphicsMozView::paint(QPainter* painter, const QStyleOptionGraphicsItem* opt, 
                                     d->mTempBufferImage.depth());
             painter->drawImage(QPoint(0, 0), d->mTempBufferImage);
         }
-    } else {
-        painter->fillRect(r, Qt::white);
-    }
+    } 
 }
 
 /*! \reimp

@@ -50,6 +50,8 @@ public:
       , mLastIsGoodRotation(true)
       , mIsPasswordField(false)
       , mGraphicsViewAssigned(false)
+      , mContentRect(0,0,0,0)
+      , mScrollableSize(0,0)
     {
     }
     virtual ~QGraphicsMozViewPrivate() {}
@@ -241,6 +243,11 @@ public:
                                   float aDisplayResolution, bool aLayersUpdated,
                                   nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY) { LOGT(); }
     virtual void SetPageRect(const gfxRect& aCssPageRect) { LOGT(); }
+    virtual bool SendAsyncScrollDOMEvent(const gfxRect& aContentRect, const gfxSize& aScrollableSize) {
+        mContentRect = QRect(aContentRect.x, aContentRect.y, aContentRect.width, aContentRect.height);
+        mScrollableSize = QSize(aScrollableSize.width, aScrollableSize.height);
+        return false;
+    }
 
     QGraphicsMozView* q;
     QMozContext* mContext;
@@ -261,6 +268,8 @@ public:
     bool mLastIsGoodRotation;
     bool mIsPasswordField;
     bool mGraphicsViewAssigned;
+    QRect mContentRect;
+    QSize mScrollableSize;
 };
 
 QGraphicsMozView::QGraphicsMozView(QGraphicsItem* parent)
@@ -592,6 +601,16 @@ QGraphicsMozView::sendAsyncMessage(const QString& name, const QString& message)
     if (!d->mViewInitialized)
         return;
     d->mView->SendAsyncMessage((const PRUnichar*)name.constData(), (const PRUnichar*)message.constData());
+}
+
+QRect QGraphicsMozView::contentRect() const
+{
+    return d->mContentRect;
+}
+
+QSize QGraphicsMozView::scrollableSize() const
+{
+    return d->mScrollableSize;
 }
 
 QString QGraphicsMozView::title() const

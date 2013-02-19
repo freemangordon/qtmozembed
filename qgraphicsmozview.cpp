@@ -737,7 +737,10 @@ void QGraphicsMozView::keyPressEvent(QKeyEvent* event)
             return;
         }
     }
+
+#if !defined(Q_WS_MAEMO_5)
     d->mView->SendKeyPress(domKeyCode, gmodifiers, charCode);
+#endif
 }
 
 void QGraphicsMozView::keyReleaseEvent(QKeyEvent* event)
@@ -756,6 +759,9 @@ void QGraphicsMozView::keyReleaseEvent(QKeyEvent* event)
             return;
         }
     }
+#if defined(Q_WS_MAEMO_5)
+    d->mView->SendKeyPress(domKeyCode, gmodifiers, charCode);
+#endif
     d->mView->SendKeyRelease(domKeyCode, gmodifiers, charCode);
 }
 

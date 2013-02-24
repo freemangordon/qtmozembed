@@ -15,10 +15,11 @@
 #include "nsDebug.h"
 #include "mozilla/embedlite/EmbedLiteApp.h"
 #include "mozilla/embedlite/EmbedInitGlue.h"
+#include "mozilla/embedlite/EmbedLiteView.h"
 
 using namespace mozilla::embedlite;
 
-static QMozContext* sSingleton = nullptr;
+static QMozContext* protectSingleton = nullptr;
 
 void
 GeckoThread::Quit()
@@ -55,8 +56,8 @@ public:
     }
 
     virtual bool ExecuteChildThread() {
-        LOGT();
         if (!getenv("GECKO_THREAD")) {
+            LOGT("Execute in child Native thread: %p", mThread);
             mThread->start();
             mThread->setPriority(QThread::LowPriority);
             return true;
@@ -65,8 +66,8 @@ public:
     }
     // Native thread must be stopped here
     virtual bool StopChildThread() {
-        LOGT();
         if (mThread) {
+            LOGT("Stop Native thread: %p", mThread);
             mThread->Quit();
             return true;
         }
@@ -87,14 +88,13 @@ public:
     }
     // App Destroyed, and ready to delete and program exit
     virtual void Destroyed() {
-        LOGT();
+        LOGT("");
     }
     virtual void OnObserve(const char* aTopic, const PRUnichar* aData) {
         LOGT("aTopic: %s, data: %s", aTopic, NS_ConvertUTF16toUTF8(aData).get());
     }
     void setDefaultPrefs()
     {
-        LOGT();
         if (getenv("DS_UA")) {
             mApp->SetCharPref("general.useragent.override", "Mozilla/5.0 (X11; Linux x86_64; rv:20.0) Gecko/20130124 Firefox/20.0");
         } else if (getenv("CT_UA")) {
@@ -111,6 +111,13 @@ public:
     }
     bool IsInitialized() { return mApp && mInitialized; }
 
+    virtual uint32_t CreateNewWindowRequested(const uint32_t& chromeFlags, const char* uri, const uint32_t& contextFlags, EmbedLiteView* aParentView)
+    {
+        LOGT("QtMozEmbedContext new Window requested: parent:%p", aParentView);
+        uint32_t retval = QMozContext::GetInstance()->newWindow(QString(), aParentView->GetUniqueID());
+        return retval;
+    }
+
     QList<QString> mObserversList;
 private:
     QMozContext* q;
@@ -125,17 +132,34 @@ QMozContext::QMozContext(QObject* parent)
     : QObject(parent)
     , d(new QMozContextPrivate(this))
 {
+    Q_ASSERT(protectSingleton == nullptr);
+    protectSingleton = this;
+    LOGT("Create new Context: %p, parent:%p", (void*)this, (void*)parent);
     setenv("BUILD_GRE_HOME", BUILD_GRE_HOME, 1);
     LoadEmbedLite();
     d->mApp = XRE_GetEmbedLite();
     d->mApp->SetListener(d);
     QObject::connect(qApp, SIGNAL(lastWindowClosed()), this, SLOT(onLastWindowClosed()));
     QTimer::singleShot(0, this, SLOT(runEmbedding()));
+    clipboard = QApplication::clipboard();
 }
 
 QMozContext::~QMozContext()
 {
+    protectSingleton = nullptr;
     delete d;
+}
+
+void
+QMozContext::setClipboard(QString text)
+{
+    clipboard->setText(text);
+}
+
+QString
+QMozContext::getClipboard()
+{
+    return clipboard->text();
 }
 
 void
@@ -160,11 +184,12 @@ QMozContext::addObserver(const QString& aTopic)
 QMozContext*
 QMozContext::GetInstance()
 {
-    if (!sSingleton) {
-        sSingleton = new QMozContext();
-        NS_ASSERTION(sSingleton, "not initialized");
+    static QMozContext* lsSingleton = nullptr;
+    if (!lsSingleton) {
+        lsSingleton = new QMozContext();
+        NS_ASSERTION(lsSingleton, "not initialized");
     }
-    return sSingleton;
+    return lsSingleton;
 }
 
 void QMozContext::runEmbedding()
@@ -187,4 +212,17 @@ QMozContext::GetApp()
 void QMozContext::onLastWindowClosed()
 {
     GetApp()->Stop();
+}
+
+quint32
+QMozContext::newWindow(const QString& url, const quint32& parentId)
+{
+    quint32 retval = Q_EMIT(this, newWindowRequested(url, parentId));
+    return retval;
+}
+
+void
+QmlMozContext::newWindow(const QString& url)
+{
+    QMozContext::GetInstance()->newWindow(url, 0);
 }

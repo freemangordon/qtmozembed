@@ -12,7 +12,9 @@
 #include <QTimer>
 #include <QTime>
 #include <QtOpenGL/QGLContext>
+#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
 #include <QInputContext>
+#endif
 #include <QApplication>
 #include <QVariantMap>
 #include "EmbedQtKeyUtils.h"
@@ -25,11 +27,13 @@
 #include "mozilla/embedlite/EmbedLiteView.h"
 #include "mozilla/embedlite/EmbedLiteApp.h"
 
-#pragma GCC system_header
-#pragma GCC visibility push(default)
-#include_next <qjson/serializer.h>
-#include_next <qjson/parser.h>
-#pragma GCC visibility pop
+#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
+#include <qjson/serializer.h>
+#include <qjson/parser.h>
+#else
+#include <QJsonParseError>
+#include <QJsonDocument>
+#endif
 
 using namespace mozilla;
 using namespace mozilla::embedlite;
@@ -151,10 +155,18 @@ public:
         NS_ConvertUTF16toUTF8 message(aMessage);
         NS_ConvertUTF16toUTF8 data(aData);
 
+        bool ok = false;
+#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
+        QJson::Parser parser;
+        QVariant vdata = parser.parse(QByteArray(data.get()), &ok);
+#else
+        QJsonParseError error;
+        QJsonDocument doc = QJsonDocument::fromJson(QByteArray(data.get()), &error);
+        ok = error.error == QJsonParseError::NoError;
+        QVariant vdata = doc.toVariant();
+#endif
+
         if (!strncmp(message.get(), "embed:", 6) || !strncmp(message.get(), "chrome:", 7)) {
-            QJson::Parser parser;
-            bool ok = false;
-            QVariant vdata = parser.parse(QByteArray(data.get()), &ok);
             if (ok) {
                 if (!strcmp(message.get(), "embed:alert")) {
                     Q_EMIT q->alert(vdata);
@@ -175,11 +187,15 @@ public:
                     return;
                 }
             } else {
+#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
                 LOGT("parse: err:%s, errLine:%i", parser.errorString().toUtf8().data(), parser.errorLine());
+#else
+                LOGT("parse: err:%s, errLine:%i", error.errorString().toUtf8().data(), error.offset);
+#endif
             }
         }
         LOGT("mesg:%s, data:%s", message.get(), data.get());
-        Q_EMIT q->recvAsyncMessage(message.get(), data.get());
+        Q_EMIT q->recvAsyncMessage(message.get(), vdata);
     }
     virtual char* RecvSyncMessage(const PRUnichar* aMessage, const PRUnichar*  aData) {
         QSyncMessageResponse response;
@@ -187,8 +203,13 @@ public:
         NS_ConvertUTF16toUTF8 data(aData);
         Q_EMIT q->recvSyncMessage(message.get(), data.get(), &response);
 
+#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
         QJson::Serializer serializer;
         QByteArray array = serializer.serialize(response.getMessage());
+#else
+        QJsonDocument doc = QJsonDocument::fromVariant(response.getMessage());
+        QByteArray array = doc.toJson();
+#endif
         LOGT("msg:%s, response:%s", message.get(), array.constData());
         return strdup(array.constData());
     }
@@ -213,6 +234,7 @@ public:
         q->setInputMethodHints(aIstate == 2 ? Qt::ImhHiddenText : Qt::ImhPreferLowercase);
         QWidget* focusWidget = qApp->focusWidget();
         if (focusWidget && aFocusChange) {
+#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
             QInputContext *inputContext = qApp->inputContext();
             if (!inputContext) {
                 LOGT("Requesting SIP: but no input context");
@@ -228,6 +250,9 @@ public:
                 inputContext->filterEvent(&request);
                 inputContext->reset();
             }
+#else
+            LOGT("Fixme IME for Qt5");
+#endif
         }
     }
 
@@ -290,8 +315,8 @@ QGraphicsMozView::QGraphicsMozView(QGraphicsItem* parent)
     , stencilProgramObject(0)
 #endif
     , d(new QGraphicsMozViewPrivate(this))
+    , mParentID(0)
 {
-    LOGT();
     setFlag(QGraphicsItem::ItemUsesExtendedStyleOption, true);
     setAcceptDrops(true);
     setAcceptTouchEvents(true);
@@ -313,6 +338,15 @@ QGraphicsMozView::QGraphicsMozView(QGraphicsItem* parent)
     }
 }
 
+void
+QGraphicsMozView::setParentID(unsigned aParentID)
+{
+    LOGT("mParentID:%u", aParentID);
+    mParentID = aParentID;
+    if (mParentID) {
+        onInitialized();
+    }
+}
 
 QGraphicsMozView::~QGraphicsMozView()
 {
@@ -322,9 +356,17 @@ QGraphicsMozView::~QGraphicsMozView()
 void
 QGraphicsMozView::onInitialized()
 {
-    LOGT();
-    d->mView = d->mContext->GetApp()->CreateView();
-    d->mView->SetListener(d);
+    LOGT("mParentID:%u", mParentID);
+    if (!d->mView) {
+        d->mView = d->mContext->GetApp()->CreateView(mParentID);
+        d->mView->SetListener(d);
+    }
+}
+
+quint32
+QGraphicsMozView::uniqueID() const
+{
+    return d->mView ? d->mView->GetUniqueID() : 0;
 }
 
 #if defined(GL_PROVIDER_EGL) && !defined(EGL_FORCE_SCISSOR_CLIP)
@@ -594,7 +636,7 @@ void QGraphicsMozView::load(const QString& url)
 
 void QGraphicsMozView::addMessageListener(const QString& name)
 {
-    d->mView->AddMessageListener(name.toAscii());
+    d->mView->AddMessageListener(name.toUtf8());
 }
 
 void QGraphicsMozView::sendAsyncMessage(const QString& name, const QVariant& variant)
@@ -602,8 +644,14 @@ void QGraphicsMozView::sendAsyncMessage(const QString& name, const QVariant& var
     if (!d->mViewInitialized)
         return;
 
+#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
     QJson::Serializer serializer;
     QByteArray array = serializer.serialize(variant);
+#else
+    QJsonDocument doc = QJsonDocument::fromVariant(variant);
+    QByteArray array = doc.toJson();
+#endif
+
     d->mView->SendAsyncMessage((const PRUnichar*)name.constData(), NS_ConvertUTF8toUTF16(array.constData()).get());
 }
 
@@ -707,14 +755,14 @@ bool QGraphicsMozView::event(QEvent* event)
         return true;
     }
     case QEvent::Show: {
-        printf(">>>>>>Func:%s::%d Event Show\n", __PRETTY_FUNCTION__, __LINE__);
-        if (QGLContext::currentContext()) {
+        LOGT("Event Show: curCtx:%p", QGLContext::currentContext());
+        if (QGLContext::currentContext() && !getenv("SWRENDER")) {
             d->mContext->GetApp()->SetIsAccelerated(true);
         }
         break;
     }
     case QEvent::Hide: {
-        printf(">>>>>>Func:%s::%d Event Hide\n", __PRETTY_FUNCTION__, __LINE__);
+        LOGT("Event Hide");
         break;
     }
     default:
@@ -928,4 +976,10 @@ QGraphicsMozView::inputMethodQuery(Qt::InputMethodQuery aQuery) const
 {
     static bool commitNow = getenv("DO_FAST_COMMIT") != 0;
     return commitNow ? QVariant(0) : QVariant();
+}
+
+void
+QGraphicsMozView::newWindow(const QString& url)
+{
+    LOGT("New Window: %s", url.toUtf8().data());
 }

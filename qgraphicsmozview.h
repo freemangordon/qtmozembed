@@ -76,6 +76,9 @@ public Q_SLOTS:
     void sendAsyncMessage(const QString& name, const QString& message);
     void sendAsyncMessage(const QString& name, const QVariant& variant);
     void addMessageListener(const QString& name);
+    void newWindow(const QString& url = "about:blank");
+    quint32 uniqueID() const;
+    void setParentID(unsigned aParentID);
 
 Q_SIGNALS:
     void viewInitialized();
@@ -85,7 +88,7 @@ Q_SIGNALS:
     void navigationHistoryChanged();
     void loadingChanged();
     void viewDestroyed();
-    void recvAsyncMessage(const QString message, const QString data);
+    void recvAsyncMessage(const QString message, const QVariant data);
     bool recvSyncMessage(const QString message, const QString data, QSyncMessageResponse* response);
     void loadRedirect();
     void securityChanged(QString status, uint state);
@@ -129,6 +132,7 @@ private:
 #endif
     QGraphicsMozViewPrivate* d;
     friend class QGraphicsMozViewPrivate;
+    unsigned mParentID;
 };
 
 #endif /* qgraphicsmozview_h */

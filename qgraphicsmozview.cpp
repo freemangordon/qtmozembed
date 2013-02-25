@@ -87,19 +87,25 @@ public:
             mView->SetViewSize(mSize.width(), mSize.height());
         }
     }
+    virtual bool RequestCurrentGLContext()
+    {
+        QGraphicsView* view = GetViewWidget();
+        if (view) {
+            QGLWidget* qglwidget = qobject_cast<QGLWidget*>(view->viewport());
+            if (qglwidget) {
+                qglwidget->makeCurrent();
+                QGLContext* context = const_cast<QGLContext*>(QGLContext::currentContext());
+                if (context)
+                    return true;
+            }
+        }
+        return false;
+    }
     virtual void ViewInitialized() {
         mViewInitialized = true;
         UpdateViewSize();
         Q_EMIT q->viewInitialized();
         Q_EMIT q->navigationHistoryChanged();
-        if (getenv("LOAD_BR_CHILD")) {
-            mView->LoadFrameScript("chrome://global/content/BrowserElementChild.js");
-            mView->SendAsyncMessage((const PRUnichar*)QString("DocShell:SetAsyncZoomPanEnabled").constData(), (const PRUnichar*)QString("true").constData());
-        }
-        mView->AddMessageListener("embed:alert");
-        mView->AddMessageListener("embed:prompt");
-        mView->AddMessageListener("embed:confirm");
-        mView->AddMessageListener("embed:auth");
     }
     virtual void SetBackgroundColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
         mBgColor = QColor(r, g, b, a);
@@ -634,9 +640,16 @@ void QGraphicsMozView::load(const QString& url)
     d->mView->LoadURL(QUrl::fromUserInput(url).toString().toUtf8().data());
 }
 
+void QGraphicsMozView::loadFrameScript(const QString& name)
+{
+    LOGT("script:%s", name.toUtf8().data());
+    d->mView->LoadFrameScript(name.toUtf8().data());
+}
+
 void QGraphicsMozView::addMessageListener(const QString& name)
 {
-    d->mView->AddMessageListener(name.toUtf8());
+    LOGT("name:%s", name.toUtf8().data());
+    d->mView->AddMessageListener(name.toUtf8().data());
 }
 
 void QGraphicsMozView::sendAsyncMessage(const QString& name, const QVariant& variant)

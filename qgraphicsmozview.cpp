@@ -284,6 +284,12 @@ public:
         return false;
     }
 
+    virtual bool HandleLongTap(const nsIntPoint& aPoint){
+        Q_EMIT q->longTapped();
+        qDebug("LongTap");
+        return false;
+    }
+
     QGraphicsMozView* q;
     QMozContext* mContext;
     EmbedLiteView* mView;

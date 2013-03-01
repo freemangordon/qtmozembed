@@ -153,8 +153,10 @@ public:
     }
 
     // View finally destroyed and deleted
-    virtual void Destroyed() {
+    virtual void ViewDestroyed() {
         LOGT();
+        mView = NULL;
+        mViewInitialized = false;
         Q_EMIT q->viewDestroyed();
     }
     virtual void RecvAsyncMessage(const PRUnichar* aMessage, const PRUnichar* aData) {
@@ -287,6 +289,18 @@ public:
         mScrollableOffset = QPointF(aPosition.x, aPosition.y);
         mContentResolution = aResolution;
         Q_EMIT q->viewAreaChanged();
+        return false;
+    }
+    virtual bool HandleLongTap(const nsIntPoint& aPoint) {
+        Q_EMIT q->handleLongTap(QPoint(aPoint.x, aPoint.y));
+        return false;
+    }
+    virtual bool HandleSingleTap(const nsIntPoint& aPoint) {
+        Q_EMIT q->handleSingleTap(QPoint(aPoint.x, aPoint.y));
+        return false;
+    }
+    virtual bool HandleDoubleTap(const nsIntPoint& aPoint) {
+        Q_EMIT q->handleDoubleTap(QPoint(aPoint.x, aPoint.y));
         return false;
     }
 

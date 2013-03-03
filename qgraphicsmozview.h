@@ -76,6 +76,7 @@ public Q_SLOTS:
     void sendAsyncMessage(const QString& name, const QString& message);
     void sendAsyncMessage(const QString& name, const QVariant& variant);
     void addMessageListener(const QString& name);
+    void loadFrameScript(const QString& name);
     void newWindow(const QString& url = "about:blank");
     quint32 uniqueID() const;
     void setParentID(unsigned aParentID);
@@ -99,7 +100,9 @@ Q_SIGNALS:
     void prompt(QVariant data);
     void authRequired(QVariant data);
     void viewAreaChanged();
-    void longTapped();
+    void handleLongTap(QPoint point);
+    void handleSingleTap(QPoint point);
+    void handleDoubleTap(QPoint point);
 
 protected:
     virtual void setGeometry(const QRectF& rect);

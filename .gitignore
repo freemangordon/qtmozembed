@@ -14,4 +14,4 @@ qmlmozbrowser-dbg_0.1_armel.deb
 qmlmozbrowser_0.1_armel.changes
 qmlmozbrowser_0.1_armel.deb
 qtmozembed_0.1_armel.changes
-
+*.pro.user

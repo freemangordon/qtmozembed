@@ -12,8 +12,10 @@
 #include <QTimer>
 #include <QTime>
 #include <QtOpenGL/QGLContext>
-#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
 #include <QInputContext>
+#else
+#include <QJsonDocument>
 #endif
 #include <QApplication>
 #include <QVariantMap>
@@ -164,7 +166,7 @@ public:
         NS_ConvertUTF16toUTF8 data(aData);
 
         bool ok = false;
-#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
         QJson::Parser parser;
         QVariant vdata = parser.parse(QByteArray(data.get()), &ok);
 #else
@@ -195,7 +197,7 @@ public:
                     return;
                 }
             } else {
-#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
                 LOGT("parse: err:%s, errLine:%i", parser.errorString().toUtf8().data(), parser.errorLine());
 #else
                 LOGT("parse: err:%s, errLine:%i", error.errorString().toUtf8().data(), error.offset);
@@ -211,7 +213,7 @@ public:
         NS_ConvertUTF16toUTF8 data(aData);
         Q_EMIT q->recvSyncMessage(message.get(), data.get(), &response);
 
-#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
         QJson::Serializer serializer;
         QByteArray array = serializer.serialize(response.getMessage());
 #else
@@ -242,7 +244,7 @@ public:
         q->setInputMethodHints(aIstate == 2 ? Qt::ImhHiddenText : Qt::ImhPreferLowercase);
         QWidget* focusWidget = qApp->focusWidget();
         if (focusWidget && aFocusChange) {
-#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
             QInputContext *inputContext = qApp->inputContext();
             if (!inputContext) {
                 LOGT("Requesting SIP: but no input context");
@@ -665,7 +667,7 @@ void QGraphicsMozView::sendAsyncMessage(const QString& name, const QVariant& var
     if (!d->mViewInitialized)
         return;
 
-#if (QT_VERSION <= QT_VERSION_CHECK(5, 0, 0))
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
     QJson::Serializer serializer;
     QByteArray array = serializer.serialize(variant);
 #else
@@ -796,12 +798,18 @@ bool QGraphicsMozView::event(QEvent* event)
 
 void QGraphicsMozView::onDisplayEntered()
 {
+    if (!d->mView) {
+        return;
+    }
     d->mView->SetIsActive(true);
     d->mView->ResumeTimeouts();
 }
 
 void QGraphicsMozView::onDisplayExited()
 {
+    if (!d->mView) {
+        return;
+    }
     d->mView->SetIsActive(false);
     d->mView->SuspendTimeouts();
 }

@@ -6,12 +6,16 @@ TEMPLATE = lib
 SOURCES += qmozcontext.cpp \
            EmbedQtKeyUtils.cpp \
            qdeclarativemozview.cpp \
-           qgraphicsmozview.cpp
+           qgraphicsmozview.cpp \
+           qgraphicsmozview_p.cpp \
+           geckoworker.cpp
 
 HEADERS += qmozcontext.h \
            EmbedQtKeyUtils.h \
            qdeclarativemozview.h \
-           qgraphicsmozview.h
+           qgraphicsmozview.h \
+           qgraphicsmozview_p.h \
+           geckoworker.h
 
 !contains(QT_MAJOR_VERSION, 4) {
 SOURCES += quickmozview.cpp
@@ -28,10 +32,10 @@ isEmpty(OBJ_DEB_DIR) {
   OBJ_DEB_DIR=$$OBJ_BUILD_PATH
 }
 
-OBJECTS_DIR += ./$$OBJ_DEB_DIR
-DESTDIR = ./$$OBJ_DEB_DIR
-MOC_DIR += ./$$OBJ_DEB_DIR/tmp/moc/release_static
-RCC_DIR += ./$$OBJ_DEB_DIR/tmp/rcc/release_static
+OBJECTS_DIR += ../$$OBJ_DEB_DIR
+DESTDIR = ../$$OBJ_DEB_DIR
+MOC_DIR += ../$$OBJ_DEB_DIR/tmp/moc/release_static
+RCC_DIR += ../$$OBJ_DEB_DIR/tmp/rcc/release_static
 
 include(qmozembed.pri)
 

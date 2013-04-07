@@ -73,7 +73,6 @@ public Q_SLOTS:
     void stop();
     void reload();
     void load(const QString&);
-    void sendAsyncMessage(const QString& name, const QString& message);
     void sendAsyncMessage(const QString& name, const QVariant& variant);
     void addMessageListener(const QString& name);
     void loadFrameScript(const QString& name);
@@ -90,15 +89,11 @@ Q_SIGNALS:
     void loadingChanged();
     void viewDestroyed();
     void recvAsyncMessage(const QString message, const QVariant data);
-    bool recvSyncMessage(const QString message, const QString data, QSyncMessageResponse* response);
+    bool recvSyncMessage(const QString message, const QVariant data, QSyncMessageResponse* response);
     void loadRedirect();
     void securityChanged(QString status, uint state);
     void firstPaint(int32_t offx, int32_t offy);
     void contentLoaded(QString docuri);
-    void alert(QVariant data);
-    void confirm(QVariant data);
-    void prompt(QVariant data);
-    void authRequired(QVariant data);
     void viewAreaChanged();
     void handleLongTap(QPoint point);
     void handleSingleTap(QPoint point);

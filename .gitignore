@@ -10,3 +10,6 @@ debian/libqtmozembed.substvars
 debian/libqtmozembed/
 debian/tmp/
 objdir-*/
+*.pro.user
+*.deb
+*.changes

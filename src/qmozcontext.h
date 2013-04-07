@@ -8,8 +8,7 @@
 #define qmozcontext_h
 
 #include <QObject>
-#include <QThread>
-#include <QClipboard>
+#include <QVariant>
 
 class QMozContextPrivate;
 
@@ -18,30 +17,12 @@ namespace embedlite {
 class EmbedLiteApp;
 }}
 
-class QEventLoop;
-class QMozContext;
-class GeckoThread : public QThread
-{
-    Q_OBJECT
-public:
-    GeckoThread(QMozContext* aContext) : mContext(aContext), mEventLoop(NULL) {}
-    void run();
-
-public Q_SLOTS:
-    void Quit();
-
-public:
-    QMozContext* mContext;
-    QEventLoop* mEventLoop;
-};
-
 class QMozContext : public QObject
 {
     Q_OBJECT
 public:
     virtual ~QMozContext();
 
-    bool initialized();
     mozilla::embedlite::EmbedLiteApp* GetApp();
 
     static QMozContext* GetInstance();
@@ -49,38 +30,28 @@ public:
 Q_SIGNALS:
     void onInitialized();
     unsigned newWindowRequested(const QString& url, const unsigned& parentId);
+    void recvObserve(const QString message, const QVariant data);
 
 public Q_SLOTS:
+    bool initialized();
+    void setIsAccelerated(bool aIsAccelerated);
+    bool isAccelerated();
     void addComponentManifest(const QString& manifestPath);
     void addObserver(const QString& aTopic);
-    quint32 newWindow(const QString& url, const quint32& parentId);
-
-private Q_SLOTS:
-    void runEmbedding();
-    void onLastWindowClosed();
+    quint32 newWindow(const QString& url, const quint32& parentId = 0);
+    void sendObserve(const QString& aTopic, const QVariant& variant);
+    // running this without delay specified will execute Gecko/Qt nested main loop
+    // and block this call until stopEmbedding called
+    void runEmbedding(int aDelay = -1);
+    void stopEmbedding();
+    void setPref(const QString& aName, const QVariant& aPref);
+    void notifyFirstUIInitialized();
 
 private:
     QMozContext(QObject* parent = 0);
 
     QMozContextPrivate* d;
     friend class QMozContextPrivate;
-};
-
-class QmlMozContext : public QObject
-{
-    Q_OBJECT
-public:
-    QmlMozContext(QObject* parent = 0);
-    virtual ~QmlMozContext() {}
-
-private:
-    QClipboard* clipboard;
-
-public Q_SLOTS:
-    void setPref(const QString& aName, const QVariant& aPref);
-    void newWindow(const QString& url = "about:mozilla");
-    void setClipboard(QString text);
-    QString getClipboard();
 };
 
 #endif /* qmozcontext_h */

@@ -47,6 +47,7 @@ class QGraphicsMozView : public QGraphicsWidget
     Q_PROPERTY(QSize scrollableSize READ scrollableSize)
     Q_PROPERTY(QPointF scrollableOffset READ scrollableOffset)
     Q_PROPERTY(float resolution READ resolution)
+    Q_PROPERTY(bool painted READ isPainted NOTIFY firstPaint FINAL)
 
 public:
     QGraphicsMozView(QGraphicsItem* parent = 0);
@@ -64,6 +65,7 @@ public:
     QSize scrollableSize() const;
     QPointF scrollableOffset() const;
     float resolution() const;
+    bool isPainted() const;
 
 public Q_SLOTS:
     void loadHtml(const QString& html, const QUrl& baseUrl = QUrl());
@@ -72,13 +74,16 @@ public Q_SLOTS:
     void stop();
     void reload();
     void load(const QString&);
-    void sendAsyncMessage(const QString& name, const QString& message);
     void sendAsyncMessage(const QString& name, const QVariant& variant);
     void addMessageListener(const QString& name);
     void loadFrameScript(const QString& name);
     void newWindow(const QString& url = "about:blank");
     quint32 uniqueID() const;
     void setParentID(unsigned aParentID);
+    void synthTouchBegin(const QVariant& touches);
+    void synthTouchMove(const QVariant& touches);
+    void synthTouchEnd(const QVariant& touches);
+    void scrollTo(const QPointF& position);
 
 Q_SIGNALS:
     void viewInitialized();
@@ -89,19 +94,16 @@ Q_SIGNALS:
     void loadingChanged();
     void viewDestroyed();
     void recvAsyncMessage(const QString message, const QVariant data);
-    bool recvSyncMessage(const QString message, const QString data, QSyncMessageResponse* response);
+    bool recvSyncMessage(const QString message, const QVariant data, QSyncMessageResponse* response);
     void loadRedirect();
     void securityChanged(QString status, uint state);
-    void firstPaint(int32_t offx, int32_t offy);
+    void firstPaint(int offx, int offy);
     void contentLoaded(QString docuri);
-    void alert(QVariant data);
-    void confirm(QVariant data);
-    void prompt(QVariant data);
-    void authRequired(QVariant data);
     void viewAreaChanged();
     void handleLongTap(QPoint point);
     void handleSingleTap(QPoint point);
     void handleDoubleTap(QPoint point);
+    void imeNotification(int state, bool open, int cause, int focusChange, const QString& type);
 
 protected:
     virtual void setGeometry(const QRectF& rect);

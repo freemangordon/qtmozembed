@@ -10,8 +10,17 @@
 #include <QTimer>
 #include <QApplication>
 #include <QVariant>
+#include <QThread>
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
+#include <qjson/serializer.h>
+#include <qjson/parser.h>
+#else
+#include <QJsonDocument>
+#include <QJsonParseError>
+#endif
 
 #include "qmozcontext.h"
+#include "geckoworker.h"
 
 #include "nsDebug.h"
 #include "mozilla/embedlite/EmbedLiteApp.h"
@@ -22,45 +31,36 @@ using namespace mozilla::embedlite;
 
 static QMozContext* protectSingleton = nullptr;
 
-void
-GeckoThread::Quit()
-{
-    if (mEventLoop)
-        mEventLoop->quit();
-    quit();
-    wait();
-}
-
-void
-GeckoThread::run()
-{
-    mContext->GetApp()->StartChildThread();
-    mEventLoop = new QEventLoop();
-    mEventLoop->exec();
-    printf("Call Term StopChildThread\n");
-    mContext->GetApp()->StopChildThread();
-    delete mEventLoop;
-    mEventLoop = 0;
-}
-
 class QMozContextPrivate : public EmbedLiteAppListener {
 public:
     QMozContextPrivate(QMozContext* qq)
     : q(qq)
     , mApp(NULL)
     , mInitialized(false)
-    , mThread(new GeckoThread(qq))
+    , mThread(new QThread())
+    , mEmbedStarted(false)
     {
     }
+
     virtual ~QMozContextPrivate() {
+        // deleting a running thread may result in a crash
+        if (!mThread->isFinished()) {
+            mThread->exit(0);
+            mThread->wait();
+        }
         delete mThread;
     }
 
     virtual bool ExecuteChildThread() {
         if (!getenv("GECKO_THREAD")) {
             LOGT("Execute in child Native thread: %p", mThread);
-            mThread->start();
-            mThread->setPriority(QThread::LowPriority);
+            GeckoWorker *worker = new GeckoWorker(mApp);
+
+            QObject::connect(mThread, SIGNAL(started()), worker, SLOT(doWork()));
+            QObject::connect(mThread, SIGNAL(finished()), worker, SLOT(quit()));
+            worker->moveToThread(mThread);
+
+            mThread->start(QThread::LowPriority);
             return true;
         }
         return false;
@@ -69,7 +69,8 @@ public:
     virtual bool StopChildThread() {
         if (mThread) {
             LOGT("Stop Native thread: %p", mThread);
-            mThread->Quit();
+            mThread->exit(0);
+            mThread->wait();
             return true;
         }
         return false;
@@ -77,6 +78,11 @@ public:
     // App Initialized and ready to API call
     virtual void Initialized() {
         mInitialized = true;
+#ifdef GL_PROVIDER_EGL
+        if (mApp->GetRenderType() == EmbedLiteApp::RENDER_AUTO) {
+            mApp->SetIsAccelerated(true);
+        }
+#endif
         setDefaultPrefs();
         mApp->LoadGlobalStyleSheet("chrome://global/content/embedScrollStyles.css", true);
         Q_EMIT q->onInitialized();
@@ -92,12 +98,42 @@ public:
         LOGT("");
     }
     virtual void OnObserve(const char* aTopic, const PRUnichar* aData) {
-        LOGT("aTopic: %s, data: %s", aTopic, NS_ConvertUTF16toUTF8(aData).get());
+        // LOGT("aTopic: %s, data: %s", aTopic, NS_ConvertUTF16toUTF8(aData).get());
+        QString data((QChar*)aData);
+        if (!data.startsWith('{') && !data.startsWith('[') && !data.startsWith('"')) {
+            QVariant vdata = QVariant::fromValue(data);
+            Q_EMIT q->recvObserve(aTopic, vdata);
+            return;
+        }
+        bool ok = true;
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
+        QJson::Parser parser;
+        QVariant vdata = parser.parse(data.toUtf8(), &ok);
+#else
+        QJsonParseError error;
+        QJsonDocument doc = QJsonDocument::fromJson(data.toUtf8(), &error);
+        ok = error.error == QJsonParseError::NoError;
+        QVariant vdata = doc.toVariant();
+#endif
+        if (ok) {
+            // LOGT("mesg:%s, data:%s", aTopic, data.toUtf8().data());
+            Q_EMIT q->recvObserve(aTopic, vdata);
+        } else {
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
+            LOGT("parse: s:'%s', err:%s, errLine:%i", data.toUtf8().data(), parser.errorString().toUtf8().data(), parser.errorLine());
+#else
+            LOGT("parse: s:'%s', err:%s, errLine:%i", data.toUtf8().data(), error.errorString().toUtf8().data(), error.offset);
+#endif
+        }
     }
     void setDefaultPrefs()
     {
         if (getenv("DS_UA")) {
             mApp->SetCharPref("general.useragent.override", "Mozilla/5.0 (X11; Linux x86_64; rv:20.0) Gecko/20130124 Firefox/20.0");
+        } else if (getenv("MT_UA")) {
+            mApp->SetCharPref("general.useragent.override", "Mozilla/5.0 (Android; Tablet; rv:20.0) Gecko/20.0 Firefox/20.0");
+        } else if (getenv("MP_UA")) {
+            mApp->SetCharPref("general.useragent.override", "Mozilla/5.0 (Android; Mobile; rv:20.0) Gecko/20.0 Firefox/20.0");
         } else if (getenv("CT_UA")) {
             mApp->SetCharPref("general.useragent.override", "Mozilla/5.0 (Linux; Android 4.0.3; Transformer Prime TF201 Build/IML74K) AppleWebKit/535.19 (KHTML, like Gecko) Tablet Chrome/18.0.1025.166 Safari/535.19");
         } else if (getenv("GB_UA")) {
@@ -125,8 +161,8 @@ private:
     EmbedLiteApp* mApp;
     bool mInitialized;
     friend class QMozContext;
-    friend class GeckoThread;
-    GeckoThread* mThread;
+    QThread* mThread;
+    bool mEmbedStarted;
 };
 
 QMozContext::QMozContext(QObject* parent)
@@ -140,26 +176,41 @@ QMozContext::QMozContext(QObject* parent)
     LoadEmbedLite();
     d->mApp = XRE_GetEmbedLite();
     d->mApp->SetListener(d);
-    QObject::connect(qApp, SIGNAL(lastWindowClosed()), this, SLOT(onLastWindowClosed()));
-    QTimer::singleShot(0, this, SLOT(runEmbedding()));
 }
 
 QMozContext::~QMozContext()
 {
     protectSingleton = nullptr;
+    if (d->mApp) {
+        d->mApp->SetListener(NULL);
+    }
     delete d;
 }
 
 void
-QmlMozContext::setClipboard(QString text)
+QMozContext::sendObserve(const QString& aTopic, const QVariant& variant)
 {
-    clipboard->setText(text);
+    if (!d->mApp)
+        return;
+
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
+    QJson::Serializer serializer;
+    QByteArray array = serializer.serialize(variant);
+#else
+    QJsonDocument doc = QJsonDocument::fromVariant(variant);
+    QByteArray array = doc.toJson();
+#endif
+
+    d->mApp->SendObserve(aTopic.toUtf8().data(), (const PRUnichar*)QString(array).constData());
 }
 
-QString
-QmlMozContext::getClipboard()
+void
+QMozContext::sendObserve(const QString& aTopic, const QString& string)
 {
-    return clipboard->text();
+    if (!d->mApp)
+        return;
+
+    d->mApp->SendObserve(aTopic.toUtf8().data(), (const PRUnichar*)string.constData());
 }
 
 void
@@ -186,15 +237,19 @@ QMozContext::GetInstance()
 {
     static QMozContext* lsSingleton = nullptr;
     if (!lsSingleton) {
-        lsSingleton = new QMozContext();
+        lsSingleton = new QMozContext(0);
         NS_ASSERTION(lsSingleton, "not initialized");
     }
     return lsSingleton;
 }
 
-void QMozContext::runEmbedding()
+void QMozContext::runEmbedding(int aDelay)
 {
-    d->mApp->Start(EmbedLiteApp::EMBED_THREAD);
+    if (!d->mEmbedStarted) {
+        d->mEmbedStarted = true;
+        d->mApp->Start(EmbedLiteApp::EMBED_THREAD);
+        d->mEmbedStarted = false;
+    }
 }
 
 bool
@@ -209,7 +264,7 @@ QMozContext::GetApp()
     return d->mApp;
 }
 
-void QMozContext::onLastWindowClosed()
+void QMozContext::stopEmbedding()
 {
     GetApp()->Stop();
 }
@@ -221,37 +276,50 @@ QMozContext::newWindow(const QString& url, const quint32& parentId)
     return retval;
 }
 
-QmlMozContext::QmlMozContext(QObject* parent)
-  : QObject(parent)
+void
+QMozContext::setIsAccelerated(bool aIsAccelerated)
 {
-    clipboard = QApplication::clipboard();
+    if (!d->mApp)
+        return;
+
+    d->mApp->SetIsAccelerated(aIsAccelerated);
+}
+
+bool
+QMozContext::isAccelerated()
+{
+    if (!d->mApp)
+        return false;
+    return d->mApp->IsAccelerated();
 }
 
 void
-QmlMozContext::setPref(const QString& aName, const QVariant& aPref)
+QMozContext::setPref(const QString& aName, const QVariant& aPref)
 {
     LOGT("name:%s, type:%i", aName.toUtf8().data(), aPref.type());
-    mozilla::embedlite::EmbedLiteApp* mApp = QMozContext::GetInstance()->GetApp();
+    if (!d->mInitialized) {
+        LOGT("Error: context not yet initialized");
+        return;
+    }
     switch (aPref.type()) {
     case QVariant::String:
-        mApp->SetCharPref(aName.toUtf8().data(), aPref.toString().toUtf8().data());
+        d->mApp->SetCharPref(aName.toUtf8().data(), aPref.toString().toUtf8().data());
         break;
     case QVariant::Int:
     case QVariant::UInt:
     case QVariant::LongLong:
     case QVariant::ULongLong:
-        mApp->SetIntPref(aName.toUtf8().data(), aPref.toInt());
+        d->mApp->SetIntPref(aName.toUtf8().data(), aPref.toInt());
         break;
     case QVariant::Bool:
-        mApp->SetBoolPref(aName.toUtf8().data(), aPref.toBool());
+        d->mApp->SetBoolPref(aName.toUtf8().data(), aPref.toBool());
         break;
     case QMetaType::Float:
     case QMetaType::Double:
-        bool ok;
         if (aPref.canConvert<int>()) {
-            mApp->SetIntPref(aName.toUtf8().data(), aPref.toInt());
+            d->mApp->SetIntPref(aName.toUtf8().data(), aPref.toInt());
         } else {
-            mApp->SetCharPref(aName.toUtf8().data(), aPref.toString().toUtf8().data());
+            d->mApp->SetCharPref(aName.toUtf8().data(), aPref.toString().toUtf8().data());
         }
         break;
     default:
@@ -260,7 +328,11 @@ QmlMozContext::setPref(const QString& aName, const QVariant& aPref)
 }
 
 void
-QmlMozContext::newWindow(const QString& url)
+QMozContext::notifyFirstUIInitialized()
 {
-    QMozContext::GetInstance()->newWindow(url, 0);
+    static bool sCalledOnce = false;
+    if (!sCalledOnce) {
+        d->mApp->SendObserve("final-ui-startup", NULL);
+        sCalledOnce = true;
+    }
 }

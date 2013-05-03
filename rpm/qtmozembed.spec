@@ -1,29 +1,39 @@
-%define qtmozembedversion 1.0.0
-
 Name:       qtmozembed
-Summary:    Qt MozEmbed
-Version:    %{qtmozembedversion}
+Summary:    Qt embeddings for Gecko
+Version:    1.2.3
 Release:    1
 Group:      Applications/Internet
 License:    Mozilla License
-URL:        http://www.mozilla.com
+URL:        https://github.com/tmeshkova/qtmozembed.git
 Source0:    %{name}-%{version}.tar.bz2
 BuildRequires:  pkgconfig(QtCore) >= 4.6.0
 BuildRequires:  pkgconfig(QtOpenGL)
 BuildRequires:  pkgconfig(QtGui)
 BuildRequires:  pkgconfig(QJson)
 BuildRequires:  pkgconfig(libxul-embedding)
+BuildRequires:  pkgconfig(nspr)
+BuildRequires:  pkgconfig(QtTest)
+BuildRequires:  qtest-qml-devel
 
 %description
-Mozilla XUL runner
+Qt embeddings for Gecko browser engine
 
 %package devel
-Group: Development/Tools/Other
-Requires: qtmozembed
-Summary: Headers for qtmozembed
+Group:      Applications/Internet
+Requires:   %{name} = %{version}-%{release}
+Summary:    Headers for qtmozembed
 
 %description devel
 Development files for qtmozembed.
+
+%package tests
+Summary:    Unit tests for QtMozEmbed tests
+Group:      Applications/Internet
+Requires:   %{name} = %{version}-%{release}
+Requires:   embedlite-components >= 1.0.10
+
+%description tests
+This package contains QML unit tests for QtMozEmbed library
 
 %prep
 %setup -q -n %{name}-%{version}
@@ -47,4 +57,9 @@ qmake
 %{_libdir}/pkgconfig
 %{_includedir}/*
 
-%changelog
+%files tests
+%defattr(-,root,root,-)
+# >> files tests
+/opt/tests/qtmozembed/*
+%{_libdir}/qt4/bin/*
+# << files tests
